@@ -29,6 +29,7 @@ VERMELHO = (220, 20, 60)
 LARANJA = (255, 140, 0)
 AZUL_AGUA = (0, 191, 255)
 ROXO = (128, 0, 128)
+VERDE_ESCURO = (0, 100, 0)
 
 # 4. RELÓGIO E FPS
 relogio = pygame.time.Clock()
@@ -43,7 +44,8 @@ class EstadoJogo:
     GAME_OVER = 4
     VITORIA = 5
     TRANSICAO = 6
-    PORTAL = 7  # Novo estado para seleção de área via portal
+    PORTAL = 7
+    CRAFTING = 8
 
 estado_atual = EstadoJogo.EXPLORACAO
 
@@ -157,7 +159,9 @@ def carregar_sprites():
             'Água': carregar_imagem('assets/images/items/water.png', (40, 40)),
             'Coco': carregar_imagem('assets/images/items/coconut.png', (40, 40)),
             'Cogumelo': carregar_imagem('assets/images/items/mushroom.png', (40, 40)),
-            'Peixe': carregar_imagem('assets/images/items/fish.png', (40, 40))
+            'Peixe': carregar_imagem('assets/images/items/fish.png', (40, 40)),
+            'Faca': carregar_imagem('assets/images/items/knife.png', (40, 40)),
+            'Lança': carregar_imagem('assets/images/items/spear.png', (40, 40))
         },
         
         'portal': carregar_imagem('assets/images/portal.png', (80, 80))
@@ -175,7 +179,8 @@ class Jogador:
         self.saude = 100
         self.fome = 100
         self.sede = 100
-        self.inventario = {'Madeira': 5, 'Pedra': 3, 'Comida': 3, 'Água': 3, 'Coco': 0, 'Cogumelo': 0, 'Peixe': 0}
+        self.inventario = {'Madeira': 5, 'Pedra': 3, 'Comida': 3, 'Água': 3, 'Coco': 0, 'Cogumelo': 0, 'Peixe': 0, 'Faca': 0, 'Lança': 0}
+        self.ferramentas_ativas = {'Faca': False, 'Lança': False}
         self.rect = pygame.Rect(self.x, self.y, self.largura, self.altura)
         self.dias_sobrevividos = 0
         self.direcao = 'baixo'
@@ -185,6 +190,7 @@ class Jogador:
         self.sprites = sprites
         self.movendo = False
         self.area_atual = None
+        self.bonus_coleta = 0
 
     def atualizar(self, teclas, delta_tempo, areas, portal_rect):
         self.movendo = False
@@ -212,6 +218,13 @@ class Jogador:
 
         self.rect.x = self.x
         self.rect.y = self.y
+
+        # Atualizar bônus de coleta baseado nas ferramentas
+        self.bonus_coleta = 0
+        if self.ferramentas_ativas['Faca']:
+            self.bonus_coleta += 0.2
+        if self.ferramentas_ativas['Lança']:
+            self.bonus_coleta += 0.3
 
         # Verificar se o jogador está interagindo avec o portal
         if self.rect.colliderect(portal_rect):
@@ -267,6 +280,18 @@ class Jogador:
             elif item == "Água":
                 self.sede = min(100, self.sede + 50)
                 return f"Bebeu {item}. Sede +50!"
+            elif item in ["Faca", "Lança"]:
+                # Alterna o estado da ferramenta
+                self.ferramentas_ativas[item] = not self.ferramentas_ativas[item]
+                status = "equipada" if self.ferramentas_ativas[item] else "desequipada"
+                
+                # Desequipa outras ferramentas se esta foi equipada
+                if self.ferramentas_ativas[item]:
+                    for ferramenta in self.ferramentas_ativas:
+                        if ferramenta != item:
+                            self.ferramentas_ativas[ferramenta] = False
+                
+                return f"{item} {status}. Bônus de coleta aplicado!"
         return f"Não tem {item} suficiente!"
 
     def esta_vivo(self):
@@ -281,14 +306,14 @@ class Area:
         self.rect = pygame.Rect(x, y, largura, altura)
         self.descricao = self.gerar_descricao()
         self.sprite = sprite
-        self.conexoes = {}  # Conexões com outras áreas
+        self.conexoes = {}
 
     def definir_conexoes(self, conexoes):
         self.conexoes = conexoes
 
     def gerar_descricao(self):
         descricoes = {
-            "Praia": "Areia branca e mar calmo. Cuidado com a ressaca.",
+            "Praia": "Areia white e mar calmo. Cuidado com a ressaca.",
             "Floresta": "Vegetação densa. Sons estranhos ecoam entre as árvores.",
             "Montanha": "Terreno íngreme e ar rarefeito. A vista é magnífica.",
             "Lago": "Água cristalina. Pode esconder perigos subaquáticos.",
@@ -296,22 +321,30 @@ class Area:
         }
         return descricoes.get(self.nome, "Uma área misteriosa da ilha.")
 
-    def explorar(self):
+    def explorar(self, bonus_coleta=0):
         resultado = {"recursos": {}, "evento": None, "dano": 0}
         
         for recurso, prob in self.recursos.items():
-            if random.random() < prob:
+            # Aplicar bônus de coleta se houver
+            prob_com_bonus = min(1.0, prob + (prob * bonus_coleta))
+            if random.random() < prob_com_bonus:
                 qtd = random.randint(1, 3)
+                # Chance de conseguir um item extra com bônus
+                if bonus_coleta > 0 and random.random() < bonus_coleta:
+                    qtd += 1
                 resultado["recursos"][recurso] = qtd
         
         if random.random() < self.risco:
-            resultado["evento"] = random.choice([
-                "Uma cobra venenosa te atacou!",
-                "Você caiu em um arbusto espinhado.",
-                "Uma tempestade surpreendeu você.",
-                "Um animal selvagem te perseguiu."
-            ])
-            resultado["dano"] = random.randint(5, 20)
+            eventos = [
+                ("Uma cobra venenosa te atacou!", 10, 20),
+                ("Você caiu em um arbusto espinhado.", 5, 15),
+                ("Uma tempestade surpreendeu você.", 8, 18),
+                ("Um animal selvagem te perseguiu.", 12, 25),
+                ("Você tropeçou em uma pedra.", 3, 10)
+            ]
+            evento_escolhido = random.choice(eventos)
+            resultado["evento"] = evento_escolhido[0]
+            resultado["dano"] = random.randint(evento_escolhido[1], evento_escolhido[2])
         
         return resultado
 
@@ -361,6 +394,7 @@ def salvar_jogo(jogador, dias):
         "fome": jogador.fome,
         "sede": jogador.sede,
         "inventario": jogador.inventario,
+        "ferramentas_ativas": jogador.ferramentas_ativas,
         "dias_sobrevividos": dias,
         "data_salvamento": datetime.now().isoformat()
     }
@@ -374,34 +408,72 @@ def carregar_jogo():
             return json.load(f)
     return None
 
+def verificar_crafting(jogador):
+    """Verifica se o jogador tem recursos para craftar itens"""
+    receitas = {
+        "Faca": {"Madeira": 2, "Pedra": 3},
+        "Lança": {"Madeira": 3, "Pedra": 5}  # CORREÇÃO: Removido o requisito de faca
+    }
+    
+    itens_craftaveis = []
+    for item, recursos in receitas.items():
+        pode_craftar = True
+        for recurso, quantidade in recursos.items():
+            if jogador.inventario.get(recurso, 0) < quantidade:
+                pode_craftar = False
+                break
+        if pode_craftar:
+            itens_craftaveis.append(item)
+    
+    return itens_craftaveis
+
+def craftar_item(jogador, item):
+    """Crafta um item se o jogador tiver os recursos necessários"""
+    receitas = {
+        "Faca": {"Madeira": 2, "Pedra": 3},
+        "Lança": {"Madeira": 3, "Pedra": 5}  # CORREÇÃO: Removido o requisito de faca
+    }
+    
+    if item in receitas:
+        for recurso, quantidade in receitas[item].items():
+            if jogador.inventario.get(recurso, 0) < quantidade:
+                return f"Recursos insuficientes para craftar {item}. Necessário: {receitas[item]}"
+        
+        # Deduz os recursos
+        for recurso, quantidade in receitas[item].items():
+            jogador.inventario[recurso] -= quantidade
+        
+        # Adiciona o item craftado
+        jogador.inventario[item] = jogador.inventario.get(item, 0) + 1
+        return f"{item} craftado com sucesso! Recursos usados: {receitas[item]}"
+    
+    return f"Receita para {item} não encontrada"
+
 # 10. INICIALIZAÇÃO DO JOGO
 sprites = carregar_sprites()
 jogador = Jogador(sprites)
 
 def criar_mundo(sprites):
     areas = [
-        Area("Praia", (210, 180, 140), {"Coco": 0.8, "Madeira": 0.4}, 0.2, 0, 0, LARGURA, ALTURA, sprites['areas']['Praia']),
-        Area("Floresta", VERDE, {"Madeira": 0.7, "Cogumelo": 0.5}, 0.4, LARGURA, 0, LARGURA, ALTURA, sprites['areas']['Floresta']),
-        Area("Montanha", CINZA, {"Pedra": 0.9}, 0.6, 0, ALTURA, LARGURA, ALTURA, sprites['areas']['Montanha']),
-        Area("Lago", (0, 150, 255), {"Água": 0.9, "Peixe": 0.3}, 0.3, LARGURA, ALTURA, LARGURA, ALTURA, sprites['areas']['Lago']),
+        Area("Praia", (210, 180, 140), {"Coco": 0.8, "Madeira": 0.4, "Pedra": 0.2}, 0.2, 0, 0, LARGURA, ALTURA, sprites['areas']['Praia']),
+        Area("Floresta", VERDE, {"Madeira": 0.7, "Cogumelo": 0.5, "Pedra": 0.3}, 0.4, LARGURA, 0, LARGURA, ALTURA, sprites['areas']['Floresta']),
+        Area("Montanha", CINZA, {"Pedra": 0.9, "Madeira": 0.2}, 0.6, 0, ALTURA, LARGURA, ALTURA, sprites['areas']['Montanha']),
+        Area("Lago", (0, 150, 255), {"Água": 0.9, "Peixe": 0.3, "Pedra": 0.1}, 0.3, LARGURA, ALTURA, LARGURA, ALTURA, sprites['areas']['Lago']),
         Area("Deserto", AMARELO, {"Pedra": 0.3}, 0.7, -LARGURA, 0, LARGURA, ALTURA, sprites['areas']['Deserto'])
     ]
     
     # Definir conexões entre as áreas conforme solicitado
-    # Esquerda da Praia -> Deserto
-    # Cima da Floresta -> Montanha
-    # Cima da Montanha -> Nenhum lugar (removida a conexão)
     areas[0].definir_conexoes({"esquerda": areas[4], "direita": areas[1]})  # Praia
     areas[1].definir_conexoes({"cima": areas[2], "esquerda": areas[0], "baixo": areas[3], "direita": areas[4]})     # Floresta
     areas[2].definir_conexoes({"baixo": areas[1]})                        # Montanha (cima removido)
     areas[3].definir_conexoes({"cima": areas[1]})                        # Lago
-    areas[4].definir_conexoes({"direita": areas[0], "esquerda": areas[1]})                                           # Deserto
+    areas[4].definir_conexoes({"direita": areas[0], "esquerda": areas[1]}) # Deserto
     
     return areas
 
 areas = criar_mundo(sprites)
 area_atual = areas[0]  # Começa na praia
-mensagem = "Bem-vindo à Ilha da Incerteza! Use WASD para mover, E para explorar, 1-7 para usar itens, P para portal."
+mensagem = "Bem-vindo à Ilha da Incerteza! Use WASD para mover, E para explorar, 1-9 para usar itens, C para crafting, P para portal."
 cooldown_explorar = 0
 COOLDOWN_MAX = FPS * 1.5
 tempo_ultimo_decaimiento = 0
@@ -410,7 +482,7 @@ dia_tempo = 0
 DIA_DURACAO = 60000
 dias_sobrevividos = 0
 transicao_timer = 0
-TRANSICAO_DURACAO = 30  # Frames para a transição
+TRANSICAO_DURACAO = 30
 
 # Portal para troca de áreas
 portal_rect = pygame.Rect(LARGURA - 100, ALTURA - 100, 80, 80)
@@ -423,6 +495,7 @@ if dados_salvos:
     jogador.fome = dados_salvos["fome"]
     jogador.sede = dados_salvos["sede"]
     jogador.inventario = dados_salvos["inventario"]
+    jogador.ferramentas_ativas = dados_salvos.get("ferramentas_ativas", {"Faca": False, "Lança": False})
     dias_sobrevividos = dados_salvos["dias_sobrevividos"]
     mensagem = f"Jogo carregado. Sobrevivendo há {dias_sobrevividos} dias."
 
@@ -439,7 +512,7 @@ while executando:
         
         if evento.type == pygame.KEYDOWN:
             if evento.key == pygame.K_e and cooldown_explorar <= 0 and estado_atual == EstadoJogo.EXPLORACAO:
-                resultado = area_atual.explorar()
+                resultado = area_atual.explorar(jogador.bonus_coleta)
                 cooldown_explorar = COOLDOWN_MAX
                 
                 if resultado["recursos"]:
@@ -447,6 +520,8 @@ while executando:
                         jogador.inventario[recurso] = jogador.inventario.get(recurso, 0) + qtd
                     recursos_texto = ", ".join([f"{qtd}x {r}" for r, qtd in resultado["recursos"].items()])
                     mensagem = f"Encontrou: {recursos_texto} em {area_atual.nome}!"
+                    if jogador.bonus_coleta > 0:
+                        mensagem += " (Bônus de ferramentas aplicado!)"
                 else:
                     mensagem = f"Explorou {area_atual.nome} mas não encontrou nada."
                 
@@ -454,11 +529,18 @@ while executando:
                     jogador.saude -= resultado["dano"]
                     mensagem += f" {resultado['evento']} (-{resultado['dano']} saúde)"
             
-            if evento.key in [pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5, pygame.K_6, pygame.K_7]:
-                itens = list(jogador.inventario.keys())
+            # CORREÇÃO: Criar uma lista fixa de itens para mapear teclas corretamente
+            if evento.key in [pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5, pygame.K_6, pygame.K_7, pygame.K_8, pygame.K_9]:
+                # Criar lista de itens disponíveis (com quantidade > 0)
+                itens_disponiveis = [item for item, qtd in jogador.inventario.items() if qtd > 0]
+                
+                # Verificar se o índice é válido
                 index = evento.key - pygame.K_1
-                if index < len(itens):
-                    mensagem = jogador.usar_item(itens[index])
+                if index < len(itens_disponiveis):
+                    item_selecionado = itens_disponiveis[index]
+                    mensagem = jogador.usar_item(item_selecionado)
+                else:
+                    mensagem = "Nenhum item nesta posição"
             
             if evento.key == pygame.K_s:
                 mensagem = salvar_jogo(jogador, dias_sobrevividos)
@@ -473,10 +555,26 @@ while executando:
                 estado_atual = EstadoJogo.PORTAL
                 mensagem = "Selecione uma área para viajar"
             
+            if evento.key == pygame.K_c and estado_atual == EstadoJogo.EXPLORACAO:
+                itens_craftaveis = verificar_crafting(jogador)
+                if itens_craftaveis:
+                    estado_atual = EstadoJogo.CRAFTING
+                    mensagem = "Selecione um item para craftar (1-9) ou ESC para cancelar"
+                else:
+                    # Mostra as receitas mesmo quando não pode craftar
+                    receitas = {
+                        "Faca": "2 Madeira + 3 Pedra",
+                        "Lança": "3 Madeira + 5 Pedra"  # CORREÇÃO: Atualizada a receita
+                    }
+                    mensagem = "Não pode craftar nada. Receitas: " + "; ".join([f"{item}: {rec}" for item, rec in receitas.items()])
+            
             if evento.key == pygame.K_ESCAPE:
                 if estado_atual == EstadoJogo.PORTAL:
                     estado_atual = EstadoJogo.EXPLORACAO
                     mensagem = "Viagem cancelada"
+                elif estado_atual == EstadoJogo.CRAFTING:
+                    estado_atual = EstadoJogo.EXPLORACAO
+                    mensagem = "Crafting cancelado"
                 else:
                     executando = False
             
@@ -488,6 +586,18 @@ while executando:
                         estado_atual = EstadoJogo.TRANSICAO
                         transicao_timer = TRANSICAO_DURACAO
                         mensagem = f"Viajando para {area_destino.nome}"
+            
+            if estado_atual == EstadoJogo.CRAFTING:
+                itens_craftaveis = verificar_crafting(jogador)
+                if evento.key in [pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5, pygame.K_6, pygame.K_7, pygame.K_8, pygame.K_9]:
+                    index = evento.key - pygame.K_1
+                    if index < len(itens_craftaveis):
+                        item_selecionado = itens_craftaveis[index]
+                        mensagem = craftar_item(jogador, item_selecionado)
+                        estado_atual = EstadoJogo.EXPLORACAO
+                    else:
+                        mensagem = "Índice inválido no menu de crafting"
+                        estado_atual = EstadoJogo.EXPLORACAO
     
     # --- ATUALIZAÇÕES DE LÓGICA ---
     teclas = pygame.key.get_pressed()
@@ -520,6 +630,12 @@ while executando:
             jogador.fome -= 2
             jogador.sede -= 3
             
+            # Ferramentas ativas reduzem o decaimento
+            if jogador.ferramentas_ativas['Faca']:
+                jogador.fome -= 0.5  # Redução menor na fome
+            if jogador.ferramentas_ativas['Lança']:
+                jogador.sede -= 0.5  # Redução menor na sede
+            
             if jogador.fome <= 0:
                 jogador.saude -= 5
                 mensagem = "Fome extrema! Saúde diminuindo."
@@ -540,7 +656,7 @@ while executando:
         if not jogador.esta_vivo():
             estado_atual = EstadoJogo.GAME_OVER
             mensagem = "Você não sobreviveu à Ilha da Incerteza..."
-        elif dias_sobrevividos >= 7 and jogador.inventario.get("Madeira", 0) >= 20:
+        elif dias_sobrevividos >= 10 and jogador.inventario.get("Madeira", 0) >= 30:
             estado_atual = EstadoJogo.VITORIA
             mensagem = "Você construiu uma jangada e escapou da ilha!"
     
@@ -553,7 +669,7 @@ while executando:
     
     # --- RENDERIZAÇÃO ---
     # Desenhar o cenário atual (fundo completo)
-    if estado_atual in [EstadoJogo.EXPLORACAO, EstadoJogo.PORTAL]:
+    if estado_atual in [EstadoJogo.EXPLORACAO, EstadoJogo.PORTAL, EstadoJogo.CRAFTING]:
         area_atual.desenhar(TELA, fundo_completo=True)
     elif estado_atual == EstadoJogo.TRANSICAO:
         # Efeito de transição (fade entre áreas)
@@ -564,7 +680,7 @@ while executando:
         area_destino.desenhar(TELA, fundo_completo=True)
         TELA.blit(s, (0, 0))
     
-    # Desenhar o jogador (exceto durante portal)
+    # Desenhar o jogador (exceto durante portal e crafting)
     if estado_atual == EstadoJogo.EXPLORACAO:
         jogador.desenhar(TELA)
     
@@ -586,17 +702,34 @@ while executando:
     desenhar_texto_com_borda(TELA, f"Sede: {int(jogador.sede)}", fonte_pequena, BRANCO, PRETO, (15, 71))
     desenhar_texto_com_borda(TELA, f"Dia: {dias_sobrevividos}", fonte_pequena, BRANCO, PRETO, (15, 101))
     
+    # Indicador de ferramentas ativas
+    y_ferramentas = 130
+    desenhar_texto_com_borda(TELA, "FERRAMENTAS:", fonte_pequena, BRANCO, PRETO, (10, y_ferramentas))
+    y_ferramentas += 25
+    
+    for ferramenta, ativa in jogador.ferramentas_ativas.items():
+        if ativa:
+            cor = VERDE
+            status = "ON"
+        else:
+            cor = VERMELHO
+            status = "OFF"
+        desenhar_texto_com_borda(TELA, f"{ferramenta}: {status}", fonte_pequena, cor, PRETO, (15, y_ferramentas))
+        y_ferramentas += 20
+    
     # UI - Inventário (melhorado com separação clara)
-    y_inv = 130
-    desenhar_texto_com_borda(TELA, "INVENTÁRIO:", fonte_pequena, BRANCO, PRETO, (10, y_inv))  # Alterado para BRANCO
-    y_inv += 30  # Mais espaço entre o título e os itens
+    y_inv = y_ferramentas + 10
+    desenhar_texto_com_borda(TELA, "INVENTÁRIO:", fonte_pequena, BRANCO, PRETO, (10, y_inv))
+    y_inv += 30
 
     tamanho_item = 40
+    # CORREÇÃO: Criar lista apenas com itens que têm quantidade > 0
     itens_visiveis = [(item, qtd) for item, qtd in jogador.inventario.items() if qtd > 0]
+    
     for i, (item, qtd) in enumerate(itens_visiveis):
-        # Adicionar número do item (1-7)
+        # Adicionar número do item (1-9) - CORREÇÃO: usar índice da lista filtrada
         numero_item = f"{i+1}."
-        desenhar_texto_com_borda(TELA, numero_item, fonte_pequena, BRANCO, PRETO, (20, y_inv))  # Alterado para BRANCO
+        desenhar_texto_com_borda(TELA, numero_item, fonte_pequena, BRANCO, PRETO, (20, y_inv))
         
         if item in sprites['itens']:
             item_sprite = pygame.transform.scale(sprites['itens'][item], (tamanho_item, tamanho_item))
@@ -605,15 +738,15 @@ while executando:
         # Nome do item e quantidade em linhas separadas
         desenhar_texto_com_borda(TELA, f"{item}", fonte_pequena, BRANCO, PRETO, (95, y_inv))
         desenhar_texto_com_borda(TELA, f"Qtd: {qtd}", fonte_pequena, BRANCO, PRETO, (95, y_inv + 20))
-        y_inv += 55  # Mais espaço entre os itens
+        y_inv += 55
     
     # UI - Área atual (movida para posição mais segura)
-    area_info_x = LARGURA - 350  # Mais espaço para garantir que caiba
+    area_info_x = LARGURA - 350
     desenhar_texto_com_borda(TELA, f"Área: {area_atual.nome}", fonte_pequena, BRANCO, PRETO, (area_info_x, 10))
     
     # Quebrar a descrição em linhas se necessário
     descricao = area_atual.descricao
-    if len(descricao) > 40:  # Se a descrição for muito longa, quebra em duas linhas
+    if len(descricao) > 40:
         partes = []
         palavras = descricao.split()
         linha_atual = ""
@@ -633,11 +766,15 @@ while executando:
     else:
         desenhar_texto_com_borda(TELA, descricao, fonte_pequena, BRANCO, PRETO, (area_info_x, 40))
     
+    # UI - Bônus de coleta
+    if jogador.bonus_coleta > 0:
+        desenhar_texto_com_borda(TELA, f"Bônus de Coleta: +{int(jogador.bonus_coleta * 100)}%", fonte_pequena, VERDE, PRETO, (area_info_x, 100))
+    
     # UI - Mensagens e controles (centralizadas na parte inferior)
     mensagem_width = fonte_pequena.size(mensagem)[0]
     desenhar_texto_com_borda(TELA, mensagem, fonte_pequena, BRANCO, PRETO, (LARGURA // 2 - mensagem_width // 2, ALTURA - 60))
     
-    controles = "WASD: Mover | E: Explorar | 1-7: Usar item | P: Portal | S: Salvar | R: Recarregar | ESC: Sair"
+    controles = "WASD: Mover | E: Explorar | 1-9: Usar item | C: Crafting | P: Portal | S: Salvar | R: Recarregar | ESC: Sair"
     controles_width = fonte_pequena.size(controles)[0]
     desenhar_texto_com_borda(TELA, controles, fonte_pequena, BRANCO, PRETO, (LARGURA // 2 - controles_width // 2, ALTURA - 30))
     
@@ -653,6 +790,35 @@ while executando:
             y_pos = ALTURA // 2 - 80 + i * 50
             texto = f"{i+1}. {area.nome} - {area.descricao}"
             desenhar_texto_centralizado(TELA, texto, fonte_pequena, BRANCO, PRETO, y_pos)
+        
+        desenhar_texto_centralizado(TELA, "Pressione ESC para cancelar", fonte_pequena, BRANCO, PRETO, ALTURA // 2 + 150)
+    
+    # Menu de crafting
+    elif estado_atual == EstadoJogo.CRAFTING:
+        s = pygame.Surface((LARGURA, ALTURA), pygame.SRCALPHA)
+        s.fill((0, 0, 0, 180))
+        TELA.blit(s, (0, 0))
+        
+        desenhar_texto_centralizado(TELA, "SISTEMA DE CRAFTING", fonte_media, BRANCO, PRETO, ALTURA // 2 - 150)
+        
+        itens_craftaveis = verificar_crafting(jogador)
+        receitas = {
+            "Faca": "2 Madeira + 3 Pedra",
+            "Lança": "3 Madeira + 5 Pedra"  # CORREÇÃO: Atualizada a receita
+        }
+        
+        if itens_craftaveis:
+            for i, item in enumerate(itens_craftaveis):
+                y_pos = ALTURA // 2 - 80 + i * 50
+                texto = f"{i+1}. {item} - {receitas[item]}"
+                desenhar_texto_centralizado(TELA, texto, fonte_pequena, BRANCO, PRETO, y_pos)
+        else:
+            # Mostra todas as receitas mesmo quando não pode craftar
+            desenhar_texto_centralizado(TELA, "Nenhum item craftável disponível", fonte_pequena, VERMELHO, PRETO, ALTURA // 2 - 50)
+            for i, (item, rec) in enumerate(receitas.items()):
+                y_pos = ALTURA // 2 + i * 30
+                texto = f"{item}: {rec}"
+                desenhar_texto_centralizado(TELA, texto, fonte_pequena, AMARELO, PRETO, y_pos)
         
         desenhar_texto_centralizado(TELA, "Pressione ESC para cancelar", fonte_pequena, BRANCO, PRETO, ALTURA // 2 + 150)
     
